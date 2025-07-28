@@ -1,24 +1,25 @@
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.star import Context, Star, register
+from astrbot.api import logger, AstrBotConfig
 import httpx
-from astrbot import Plugin, on_command, Message
+import json
 
-class QimengYunheiPlugin(Plugin):
-    # 配置项：需填写申请的API Key（在插件配置文件中设置）
-    config = {
-        "api_key": ""  # 用户需替换为自己申请的key
-    }
+@register("asbot_plugin_furry-API", "furryhm", "调用趣绮梦云黑API查询用户的插件", "1.0.0")
+class QimengYunheiPlugin(Star):
+    def __init__(self, context: Context, config: AstrBotConfig):
+        super().__init__(context)
+        self.config = config
 
-    # 命令触发：用户发送 "云黑查询 ID" 时触发
-    @on_command("云黑查询", aliases=["查询云黑"], usage="云黑查询 <用户ID>")
-    async def query_yunhei(self, ctx: Message):
+    @filter.command("云黑查询", "查询用户云黑信息")
+    async def query_yunhei(self, event: AstrMessageEvent, user_id: str = ""):
         # 获取用户输入的ID
-        user_id = ctx.get_args().strip()
         if not user_id:
-            return await ctx.reply("请输入查询的用户ID，格式：云黑查询 <ID>")
+            yield event.plain_result("请输入查询的用户ID，格式：云黑查询 <ID>")
 
         # 检查API Key是否配置
-        api_key = self.config.get("api_key")
+        api_key = self.config.get("api_key", "")
         if not api_key:
-            return await ctx.reply("请先在插件配置中填写申请的API Key")
+            yield event.plain_result("请先在插件配置中填写申请的API Key")
 
         # 构造API请求URL
         api_url = f"https://fz.qimeng.fun/OpenAPI/all_f.php?id={user_id}&key={api_key}"
@@ -27,16 +28,28 @@ class QimengYunheiPlugin(Plugin):
             async with httpx.AsyncClient() as client:
                 response = await client.get(api_url, timeout=10)
                 response.raise_for_status()
-                data = response.json()
+                
+                # 检查响应内容是否为空
+                if not response.text.strip():
+                    yield event.plain_result("查询失败：API返回空响应")
+                    return
+                    
+                # 尝试解析JSON
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as e:
+                    yield event.plain_result(f"查询失败：API返回数据格式错误 ({str(e)})")
+                    logger.error(f"JSON解析错误: {e}, 响应内容: {response.text}")
+                    return
 
             # 解析返回数据（按API示例结构处理）
             if not data.get("info"):
-                return await ctx.reply("未查询到该用户的信息")
+                yield event.plain_result("未查询到该用户的信息")
                 
             # 提取核心信息（处理嵌套结构）
             info_list = data.get("info", [{}])[0].get("info", [])
             if len(info_list) < 3:
-                return await ctx.reply("查询失败：API返回数据格式不完整")
+                yield event.plain_result("查询失败：API返回数据格式不完整")
             user_info = info_list[0]  # 用户基础信息
             stats_info = info_list[1]  # 发送统计信息
             yunhei_info = info_list[2]  # 云黑记录信息
@@ -88,19 +101,11 @@ class QimengYunheiPlugin(Plugin):
 - 云黑等级：{yunhei_level}
 - 记录日期：{yunhei_date}"""
 
-            await ctx.reply("\n".join(result))
+            yield event.plain_result(result)
 
         except httpx.RequestError as e:
-            await ctx.reply(f"查询失败：网络错误（{str(e)}）")
+            yield event.plain_result(f"查询失败：网络错误（{str(e)}）")
         except (KeyError, IndexError) as e:
-            await ctx.reply(f"查询失败：数据解析错误（{str(e)}）")
+            yield event.plain_result(f"查询失败：数据解析错误（{str(e)}）")
         except Exception as e:
-            await ctx.reply(f"查询失败：{str(e)}")
-
-    # 插件元信息
-    def __init__(self):
-        super().__init__()
-        self.name = "asbot_plugin_furry-API"
-        self.version = "1.0.0"
-        self.description = "调用趣绮梦云黑API查询用户的插件"
-        self.author = "furryhm"
+            yield event.plain_result(f"查询失败：{str(e)}")
