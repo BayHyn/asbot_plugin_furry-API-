@@ -6,4 +6,4 @@ asbot_plugin_furry-API
 
 1.0
 
-作者QQ3322969592
+作者豪毛QQ3322969592
