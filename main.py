@@ -6,7 +6,7 @@ import json
 
 @register("asbot_plugin_furry-API", "furryhm", "调用趣绮梦云黑API查询用户的插件", "1.0.0")
 class QimengYunheiPlugin(Star):
-    def __init__(self, context: Context, config: AstrBotConfig):
+    def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)
         self.config = config
 
@@ -17,7 +17,7 @@ class QimengYunheiPlugin(Star):
             yield event.plain_result("请输入查询的用户ID，格式：云黑查询 <ID>")
 
         # 检查API Key是否配置
-        api_key = self.config.get("api_key", "")
+        api_key = self.config.get("api_key", "") if self.config else ""
         if not api_key:
             yield event.plain_result("请先在插件配置中填写申请的API Key")
 
