@@ -42,43 +42,64 @@ class QimengYunheiPlugin(Star):
                     logger.error(f"JSON解析错误: {e}, 响应内容: {response.text}")
                     return
 
-            # 解析返回数据（按API示例结构处理）
+            # 解析返回数据（按实际API结构处理）
             if not data.get("info"):
                 yield event.plain_result("未查询到该用户的信息")
+                return
                 
-            # 提取核心信息（处理嵌套结构）
-            info_list = data.get("info", [{}])[0].get("info", [])
-            if len(info_list) < 3:
-                yield event.plain_result("查询失败：API返回数据格式不完整")
-            user_info = info_list[0]  # 用户基础信息
-            stats_info = info_list[1]  # 发送统计信息
-            yunhei_info = info_list[2]  # 云黑记录信息
+            # 检查数据结构是否符合预期
+            info_data = data.get("info", [])
+            if not isinstance(info_data, list) or len(info_data) == 0:
+                yield event.plain_result("查询失败：API返回数据格式错误")
+                return
+                
+            # 根据实际返回的数据结构进行处理（实际返回的是平级结构）
+            user_info = {}
+            stats_info = {}
+            yunhei_info = {}
+            
+            # 遍历info数组，根据字段识别不同类型的记录
+            for item in info_data:
+                if not isinstance(item, dict):
+                    continue
+                    
+                # 判断是否为用户基本信息（包含user字段）
+                if 'user' in item:
+                    user_info = item
+                # 判断是否为统计信息（包含group_num字段）
+                elif 'group_num' in item:
+                    stats_info = item
+                # 判断是否为云黑信息（包含yh字段）
+                elif 'yh' in item:
+                    yunhei_info = item
 
             # 辅助函数用于判断布尔值
             def is_true(value):
-                return str(value).lower() == 'true' if value is not None else False
+                if value is None:
+                    return False
+                return str(value).lower() == 'true'
 
             # 提取用户信息
-            user = user_info.get('user', '未知')
+            user = user_info.get('user', '未知') if user_info else '未知'
             tel_bound = '是' if is_true(user_info.get('tel')) else '否'
             wechat_bound = '是' if is_true(user_info.get('wx')) else '否'
             alipay_bound = '是' if is_true(user_info.get('zfb')) else '否'
             realname_auth = '是' if is_true(user_info.get('shiming')) else '否'
             
             # 提取发送统计
-            group_count = stats_info.get('group_num', '未知')
-            monthly_active = stats_info.get('m_send_num', '未知')
-            total_send = stats_info.get('send_num', '未知')
-            first_send = stats_info.get('first_send', '无记录')
-            last_send = stats_info.get('last_send', '无记录')
+            group_count = stats_info.get('group_num', '未知') if stats_info else '未知'
+            monthly_active = stats_info.get('m_send_num', '未知') if stats_info else '未知'
+            total_send = stats_info.get('send_num', '未知') if stats_info else '未知'
+            first_send = stats_info.get('first_send', '无记录') if stats_info else '无记录'
+            last_send = stats_info.get('last_send', '无记录') if stats_info else '无记录'
             
             # 提取云黑记录
             yunhei_status = '是' if is_true(yunhei_info.get('yh')) else '否'
-            yunhei_type = yunhei_info.get('type', 'none')
-            yunhei_reason = yunhei_info.get('note', '无说明')
-            yunhei_admin = yunhei_info.get('admin', '未知')
-            yunhei_level = yunhei_info.get('level', '无')
-            yunhei_date = yunhei_info.get('date', '无记录')
+            yunhei_type = yunhei_info.get('type', 'none') if yunhei_info else 'none'
+            yunhei_reason = yunhei_info.get('note', '无说明') if yunhei_info else '无说明'
+            yunhei_admin = yunhei_info.get('admin', '未知') if yunhei_info else '未知'
+            yunhei_level = yunhei_info.get('level', '无') if yunhei_info else '无'
+            yunhei_date = yunhei_info.get('date', '无记录') if yunhei_info else '无记录'
             
             # 格式化输出结果
             result = f"""📌 用户ID：{user}
