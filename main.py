@@ -3,8 +3,10 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import httpx
 import json
+import asyncio
+import astrbot.api.message_components as Comp
 
-@register("asbot_plugin_furry-API", "furryhm", "调用趣绮梦云黑API查询用户的插件", "2.0.0")
+@register("asbot_plugin_furry-API", "furryhm", "调用趣绮梦云黑API查询用户的插件", "2.0.1")
 class QimengYunheiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -23,23 +25,36 @@ class QimengYunheiPlugin(Star):
 
         # 构造API请求URL
         api_url = f"https://fz.qimeng.fun/OpenAPI/all_f.php?id={user_id}&key={api_key}"
+        
+        # 构造获取用户名称和头像的API请求URL
+        qq_info_url = f"https://api.ulq.cc/int/v1/qqname?qq={user_id}"
 
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(api_url, timeout=10)
-                response.raise_for_status()
+                # 并发请求两个API
+                yunhei_task = client.get(api_url, timeout=10)
+                qq_info_task = client.get(qq_info_url, timeout=10)
+                
+                yunhei_response, qq_info_response = await asyncio.gather(yunhei_task, qq_info_task, return_exceptions=True)
+                
+                # 处理云黑查询结果
+                if isinstance(yunhei_response, Exception):
+                    yield event.plain_result(f"查询失败：网络错误（{str(yunhei_response)}）")
+                    return
+                    
+                yunhei_response.raise_for_status()
                 
                 # 检查响应内容是否为空
-                if not response.text.strip():
+                if not yunhei_response.text.strip():
                     yield event.plain_result("查询失败：API返回空响应")
                     return
                     
                 # 尝试解析JSON
                 try:
-                    data = response.json()
+                    data = yunhei_response.json()
                 except json.JSONDecodeError as e:
                     yield event.plain_result(f"查询失败：API返回数据格式错误 ({str(e)})")
-                    logger.error(f"JSON解析错误: {e}, 响应内容: {response.text}")
+                    logger.error(f"JSON解析错误: {e}, 响应内容: {yunhei_response.text}")
                     return
 
             # 解析返回数据（按API示例结构处理）
@@ -80,28 +95,59 @@ class QimengYunheiPlugin(Star):
             yunhei_level = yunhei_info.get('level', '无') if yunhei_info.get('level') else '无'
             yunhei_date = yunhei_info.get('date', '无记录') if yunhei_info.get('date') else '无记录'
             
-            # 格式化输出结果
-            result = f"""📌 用户ID：{user}
-\n📱 关联信息：
-- 手机号绑定：{tel_bound}
-- 微信绑定：{wechat_bound}
-- 支付宝绑定：{alipay_bound}
-- 实名认证：{realname_auth}
-\n📊 发送统计：
-- 加群数：{group_count}
-- 月活数量：{monthly_active}
-- 累计发送：{total_send}
-- 首次发送：{first_send}
-- 末次发送：{last_send}
-\n🔍 云黑记录：
-- 是否云黑：{yunhei_status}
-- 类型：{yunhei_type}
-- 原因：{yunhei_reason}
-- 上黑管理：{yunhei_admin}
-- 云黑等级：{yunhei_level}
-- 记录日期：{yunhei_date}"""
+            # 处理QQ名称和头像信息
+            qq_name = "未知"
+            avatar_url = ""
+            
+            if not isinstance(qq_info_response, Exception):
+                try:
+                    qq_info_data = qq_info_response.json()
+                    if qq_info_data.get("code") == 200:
+                        qq_name = qq_info_data.get("name", "未知")
+                        avatar_url = qq_info_data.get("avatar", "")
+                except Exception as e:
+                    logger.error(f"获取QQ信息失败: {e}")
+            
+            # 格式化输出结果 - 按照头像、名字、QQ号的顺序
+            result = f"""【{qq_name}的信息档案】
+名称：{qq_name}
+QQ 号：{user}
+🔗 关联信息绑定状态
+手机号绑定：{tel_bound}
+微信绑定：{wechat_bound}
+支付宝绑定：{alipay_bound}
+实名认证：{realname_auth}
+📊 发送行为统计
+加群数：{group_count} 个
+月活数量：{monthly_active}
+累计发送次数：{total_send} 次
+首次发送时间：{first_send}
+末次发送时间：{last_send}
+🔍 云黑记录查询
+是否云黑：{yunhei_status}
+类型：{yunhei_type}
+原因：{yunhei_reason}
+上黑管理：{yunhei_admin}
+云黑等级：{yunhei_level}
+记录日期：{yunhei_date}"""
 
-            yield event.plain_result(result)
+            # 如果有头像URL，则将头像和文本合并成一条消息发送
+            if avatar_url:
+                try:
+                    # 合并头像和文本为一条消息
+                    message_chain = [
+                        Comp.Image(file=avatar_url),
+                        Comp.Plain(text=result)
+                    ]
+                    yield event.chain_result(message_chain)
+                except Exception as e:
+                    logger.error(f"发送头像和文本失败: {e}")
+                    # 如果合并发送失败，则分别发送
+                    yield event.image_result(avatar_url)
+                    yield event.plain_result(result)
+            else:
+                # 没有头像则只发送文本结果
+                yield event.plain_result(result)
 
         except httpx.RequestError as e:
             yield event.plain_result(f"查询失败：网络错误（{str(e)}）")
