@@ -90,6 +90,14 @@ class QimengYunheiPlugin(Star):
             # 提取云黑记录
             yunhei_status = '是' if is_true(yunhei_info.get('yh')) else '否'
             yunhei_type = yunhei_info.get('type', 'none') if yunhei_info.get('type') else '无'
+            
+            # 为云黑类型添加中文翻译
+            type_translations = {
+                'none': '无违规',
+                'yunhei': '云黑'
+            }
+            yunhei_type = type_translations.get(yunhei_type, yunhei_type)
+            
             yunhei_reason = yunhei_info.get('note', '无说明') if yunhei_info.get('note') else '无说明'
             yunhei_admin = yunhei_info.get('admin', '未知') if yunhei_info.get('admin') else '未知'
             yunhei_level = yunhei_info.get('level', '无') if yunhei_info.get('level') else '无'
