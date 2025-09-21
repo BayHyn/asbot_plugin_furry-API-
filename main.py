@@ -6,17 +6,39 @@ import json
 import asyncio
 import astrbot.api.message_components as Comp
 
-@register("asbot_plugin_furry-API", "furryhm", "调用趣绮梦云黑API查询用户的插件", "2.2.0")
+@register("asbot_plugin_furry-API", "furryhm", "调用趣绮梦云黑API查询用户的插件", "2.3.0")
 class QimengYunheiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
 
-    @filter.command("云黑查询", "查询用户云黑信息")
+    @filter.command("云黑", alias={"云黑查询", "查云黑"})
     async def query_yunhei(self, event: AstrMessageEvent, user_id: str = ""):
-        # 获取用户输入的ID
-        if not user_id:
-            yield event.plain_result("请输入查询的用户ID，格式：云黑查询 <ID>")
+        """
+        /云黑@某人 或 /云黑 QQ 或 /云黑查询 QQ
+        """
+        
+        # 解析目标用户ID
+        self_id = event.get_self_id()
+        target_id = next(
+            (
+                str(seg.qq)
+                for seg in event.get_messages()
+                if isinstance(seg, Comp.At) and str(seg.qq) != self_id
+            ),
+            None,
+        )
+        
+        # 如果没有@用户，则使用传入的user_id参数或查询自己
+        if not target_id:
+            target_id = (
+                user_id
+                if user_id and str(user_id) != self_id
+                else event.get_sender_id()
+            )
+            
+        # 确保最终使用的user_id是target_id
+        final_user_id = target_id
 
         # 检查API Key是否配置
         api_key = self.config.get("api_key", "")
@@ -24,18 +46,12 @@ class QimengYunheiPlugin(Star):
             yield event.plain_result("请先在插件配置中填写申请的API Key")
 
         # 构造API请求URL
-        api_url = f"https://fz.qimeng.fun/OpenAPI/all_f.php?id={user_id}&key={api_key}"
-        
-        # 构造获取用户名称和头像的API请求URL
-        qq_info_url = f"https://api.ulq.cc/int/v1/qqname?qq={user_id}"
+        api_url = f"https://fz.qimeng.fun/OpenAPI/all_f.php?id={final_user_id}&key={api_key}"
 
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                # 并发请求两个API
-                yunhei_task = client.get(api_url, timeout=10)
-                qq_info_task = client.get(qq_info_url, timeout=10)
-                
-                yunhei_response, qq_info_response = await asyncio.gather(yunhei_task, qq_info_task, return_exceptions=True)
+                # 请求云黑信息API
+                yunhei_response = await client.get(api_url, timeout=10)
                 
                 # 处理云黑查询结果
                 if isinstance(yunhei_response, Exception):
@@ -46,7 +62,7 @@ class QimengYunheiPlugin(Star):
                 
                 # 检查响应内容是否为空
                 if not yunhei_response.text.strip():
-                    yield event.plain_result("查询失败：API返回空响应")
+                    yield event.plain_result(f"查询失败：API返回空响应 (用户ID: {final_user_id})")
                     return
                     
                 # 尝试解析JSON
@@ -103,28 +119,20 @@ class QimengYunheiPlugin(Star):
             yunhei_level = yunhei_info.get('level', '无') if yunhei_info.get('level') else '无'
             yunhei_date = yunhei_info.get('date', '无记录') if yunhei_info.get('date') else '无记录'
             
-            # 处理QQ名称和头像信息
-            qq_name = "未知"
-            avatar_url = ""
+            # 使用 AstrBot API 获取用户信息和头像
+            qq_name = user  # 默认使用QQ号作为名称
+            avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={final_user_id}&spec=640"
             
-            if not isinstance(qq_info_response, Exception):
-                try:
-                    # 检查响应内容是否为空
-                    if not qq_info_response.text.strip():
-                        logger.warning(f"QQ信息API返回空响应，用户ID: {user_id}")
-                    else:
-                        qq_info_data = qq_info_response.json()
-                        if qq_info_data.get("code") == 200:
-                            qq_name = qq_info_data.get("name", "未知")
-                            avatar_url = qq_info_data.get("avatar", "")
-                        else:
-                            logger.warning(f"QQ信息API返回错误码，用户ID: {user_id}, 状态码: {qq_info_data.get('code')}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"QQ信息API JSON解析失败: {e}, 响应内容: {qq_info_response.text}")
-                except Exception as e:
-                    logger.error(f"处理QQ信息时发生未知错误: {e}, 响应内容: {qq_info_response.text if hasattr(qq_info_response, 'text') else '无响应内容'}")
-            else:
-                logger.error(f"获取QQ信息时发生网络错误: {qq_info_response}")
+            try:
+                # 尝试通过 AstrBot API 获取用户信息（参考Box插件实现方式）
+                stranger_info = await event.bot.get_stranger_info(user_id=int(final_user_id))
+                if stranger_info and 'nickname' in stranger_info and stranger_info['nickname']:
+                    qq_name = stranger_info['nickname']
+                elif stranger_info and 'name' in stranger_info and stranger_info['name']:
+                    qq_name = stranger_info['name']
+            except Exception as e:
+                logger.warning(f"无法通过 AstrBot API 获取用户信息: {e}")
+                # 回退到默认名称（QQ号）
             
             # 格式化输出结果 - 按照头像、名字、QQ号的顺序
             result = f"""【{qq_name}的信息档案】
@@ -149,10 +157,10 @@ QQ 号：{user}
 云黑等级：{yunhei_level}
 记录日期：{yunhei_date}"""
 
-            # 如果有头像URL，则将头像和文本合并成一条消息发送
+            # 如果有头像URL，则将头像和文本合并成一条消息发送（使用file参数）
             if avatar_url:
                 try:
-                    # 合并头像和文本为一条消息
+                    # 合并头像和文本为一条消息（使用file参数）
                     message_chain = [
                         Comp.Image(file=avatar_url),
                         Comp.Plain(text=result)
